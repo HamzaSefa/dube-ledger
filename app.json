@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Dube Debter",
+    "slug": "dube-debter",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/dube_logo_circle.jpg",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/dube_logo_circle.jpg",
+      "resizeMode": "contain",
+      "backgroundColor": "#0E2417"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0E2417",
+        "foregroundImage": "./assets/dube_logo_circle.jpg"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}
