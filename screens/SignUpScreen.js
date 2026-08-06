@@ -10,16 +10,52 @@ import {
   ScrollView,
   StatusBar,
   Image,
+  ActivityIndicator,
 } from 'react-native';
+import { useAuth } from '../context/AuthContext';
 
-export default function SignUpScreen() {
+export default function SignUpScreen({ navigation }) {
+  const { signUp } = useAuth();
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const logoGreen = '#27E365';
   const mutedTextColor = '#A8C5B8';
+
+  const handleSignUp = async () => {
+    // Validation
+    if (!name.trim() || !phone.trim() || !password) {
+      setError('ሁሉንም ቦታዎች ይሙሉ');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('የይለፍ ቃሎች አይዛመዱም');
+      return;
+    }
+
+    if (password.length < 6) {
+      setError('የይለፍ ቃል ቢያንስ 6 ፊደላት መሆን አለበት');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await signUp(name.trim(), phone.trim(), password);
+      // On success, user is automatically logged in
+      // AuthContext updates → App.js shows MainApp
+    } catch (err) {
+      setError(err.message || 'መመዝገብ አልተሳካም። እባክዎ እንደገና ይሞክሩ።');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -30,7 +66,6 @@ export default function SignUpScreen() {
       
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        {/* Header Section */}
         <View style={styles.header}>
           <View style={styles.logoCircle}>
             <Image 
@@ -45,17 +80,27 @@ export default function SignUpScreen() {
           </Text>
         </View>
 
-        {/* Form Section */}
         <View style={styles.form}>
           <Text style={styles.formTitle}>ይመዝገቡ (Sign Up)</Text>
+          
+          {/* Error Message */}
+          {error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
           
           <TextInput
             style={styles.input}
             placeholder="ሙሉ ስም (Full Name)"
             placeholderTextColor="#5A786A"
             value={name}
-            onChangeText={setName}
+            onChangeText={(text) => {
+              setName(text);
+              setError('');
+            }}
             autoCapitalize="words"
+            editable={!loading}
           />
           
           <TextInput
@@ -63,8 +108,12 @@ export default function SignUpScreen() {
             placeholder="ስልክ ቁጥር (Phone Number)"
             placeholderTextColor="#5A786A"
             value={phone}
-            onChangeText={setPhone}
+            onChangeText={(text) => {
+              setPhone(text);
+              setError('');
+            }}
             keyboardType="phone-pad"
+            editable={!loading}
           />
           
           <TextInput
@@ -73,24 +122,44 @@ export default function SignUpScreen() {
             placeholderTextColor="#5A786A"
             secureTextEntry
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(text) => {
+              setPassword(text);
+              setError('');
+            }}
+            editable={!loading}
           />
 
-          {/* Confirm Password Input */}
           <TextInput
             style={styles.input}
             placeholder="የይለፍ ቃል ያረጋግጡ (Confirm Password)"
             placeholderTextColor="#5A786A"
             secureTextEntry
             value={confirmPassword}
-            onChangeText={setConfirmPassword}
+            onChangeText={(text) => {
+              setConfirmPassword(text);
+              setError('');
+            }}
+            editable={!loading}
           />
           
-          <TouchableOpacity style={[styles.button, { backgroundColor: logoGreen }]}>
-            <Text style={styles.buttonText}>ተመዝገብ</Text>
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: logoGreen }]} 
+            onPress={handleSignUp}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            {loading ? (
+              <ActivityIndicator color="#0E2417" />
+            ) : (
+              <Text style={styles.buttonText}>ተመዝገብ</Text>
+            )}
           </TouchableOpacity>
           
-          <TouchableOpacity style={styles.loginLink}>
+          <TouchableOpacity 
+            style={styles.loginLink}
+            onPress={() => navigation.navigate('Login')}
+            disabled={loading}
+          >
             <Text style={[styles.loginLinkText, { color: mutedTextColor }]}>
               አካውንት አለዎት? ይግቡ
             </Text>
@@ -149,6 +218,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 18,
     textAlign: 'center',
+  },
+  errorBox: {
+    backgroundColor: 'rgba(255, 77, 77, 0.15)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.3)',
+  },
+  errorText: {
+    color: '#FF4D4D',
+    fontSize: 13,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   input: {
     backgroundColor: '#FFFFFF',

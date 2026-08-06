@@ -8,19 +8,44 @@ import {
   Switch,
   SafeAreaView,
   StatusBar,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
 
 export default function SettingsScreen({ onBack }) {
+  const { signOut } = useAuth();
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [autoBackup, setAutoBackup] = useState(false);
+  
+  // Logout confirmation state
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogoutPress = () => {
+    console.log('✅ Logout button pressed');
+    setShowLogoutConfirm(true);
+  };
+
+  const handleConfirmLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await signOut();
+      // AuthContext updates → App.js automatically shows Login/SignUp
+      console.log('✅ Logout successful');
+    } catch (err) {
+      console.log('❌ Logout error:', err.message);
+    } finally {
+      setLoggingOut(false);
+      setShowLogoutConfirm(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0E2417" />
       
-      {/* Top Header with Back Button */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={onBack}>
           <Ionicons name="arrow-back" size={24} color="#27E365" />
@@ -30,7 +55,6 @@ export default function SettingsScreen({ onBack }) {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Profile / Store Info Header */}
         <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
             <Ionicons name="storefront-outline" size={30} color="#27E365" />
@@ -41,7 +65,6 @@ export default function SettingsScreen({ onBack }) {
           </View>
         </View>
 
-        {/* General Preferences Group */}
         <Text style={styles.sectionHeader}>አጠቃላይ (General)</Text>
         <View style={styles.card}>
           <View style={styles.settingRow}>
@@ -73,7 +96,6 @@ export default function SettingsScreen({ onBack }) {
           </View>
         </View>
 
-        {/* Data & Backup Group */}
         <Text style={styles.sectionHeader}>መረጃ እና ምዝገባ (Data & Backup)</Text>
         <View style={styles.card}>
           <View style={styles.settingRow}>
@@ -100,7 +122,38 @@ export default function SettingsScreen({ onBack }) {
           </TouchableOpacity>
         </View>
 
-        {/* App Info Footer */}
+        {/* LOGOUT SECTION */}
+        {!showLogoutConfirm ? (
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogoutPress}>
+            <Ionicons name="log-out-outline" size={20} color="#FF4D4D" />
+            <Text style={styles.logoutText}>ከአካውንት ውጣ (Log Out)</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.logoutConfirmBox}>
+            <Text style={styles.logoutConfirmText}>እርግጠኛ ነዎት መውጣት ይፈልጋሉ?</Text>
+            <View style={styles.logoutConfirmRow}>
+              <TouchableOpacity 
+                style={[styles.logoutConfirmBtn, styles.logoutCancelBtn]} 
+                onPress={() => setShowLogoutConfirm(false)}
+                disabled={loggingOut}
+              >
+                <Text style={styles.logoutConfirmBtnText}>አይ (Cancel)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.logoutConfirmBtn, styles.logoutYesBtn]}
+                onPress={handleConfirmLogout}
+                disabled={loggingOut}
+              >
+                {loggingOut ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={[styles.logoutConfirmBtnText, { color: '#FFFFFF' }]}>አዎ (Yes)</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         <View style={styles.footerContainer}>
           <Text style={styles.footerText}>Dube Ledger v1.0.0</Text>
           <Text style={styles.footerSubtext}>Offline-First Credit Manager</Text>
@@ -208,6 +261,60 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: '#2A4D38',
+  },
+  logoutButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 77, 77, 0.1)',
+    borderRadius: 12,
+    paddingVertical: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.2)',
+  },
+  logoutText: {
+    color: '#FF4D4D',
+    fontSize: 15,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  logoutConfirmBox: {
+    backgroundColor: '#183424',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.3)',
+    alignItems: 'center',
+  },
+  logoutConfirmText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  logoutConfirmRow: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 10,
+  },
+  logoutConfirmBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  logoutCancelBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  logoutYesBtn: {
+    backgroundColor: '#FF4D4D',
+  },
+  logoutConfirmBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
   },
   footerContainer: {
     alignItems: 'center',

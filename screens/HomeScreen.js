@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,21 +10,32 @@ import {
   TextInput,
   Modal,
   Image,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
+import {
+  getCustomers,
+  createCustomer,
+  addTransaction,
+  getTransactions,
+} from '../api';
 
 export default function HomeScreen({ onOpenSettings }) {
-  const [voiceMode, setVoiceMode] = useState('credit'); // 'credit' or 'payment'
+  const [voiceMode, setVoiceMode] = useState('credit');
   const [isListening, setIsListening] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
 
-  // Dynamic Contact / Transaction List State
-  const [contacts, setContacts] = useState([
-    { id: '1', name: 'Abebe Kebede', phone: '0911223344', status: '0 ETB', subtext: 'ከ5 ደቂቃ በፊት', isCleared: true },
-    { id: '2', name: 'Kebede Alemu', phone: '0922334455', status: '850 ETB', subtext: 'ከ3 ደቂቃ በፊት', isCleared: false },
-    { id: '3', name: 'Biruk Desta', phone: '0933445566', status: '1,900 ETB', subtext: 'ከ5 ደቂቃ በፊት', isCleared: false },
-    { id: '4', name: 'Dawit Germa', phone: '0944556677', status: '2,300 ETB', subtext: 'ከ3 ደቂቃ በፊት', isCleared: false },
-  ]);
+  // REAL DATA STATES
+  const [customers, setCustomers] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+
+  // Search
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Selected Customer for Quick Record / Ledger Detail Modal
   const [selectedCustomerDetail, setSelectedCustomerDetail] = useState(null);
@@ -34,9 +45,10 @@ export default function HomeScreen({ onOpenSettings }) {
 
   // Parsed Voice State
   const [parsedVoiceData, setParsedVoiceData] = useState({
-    customer: 'Abebe Kebede',
-    amount: '200',
-    item: 'ስኳር',
+    customer: '',
+    customerId: null,
+    amount: '',
+    item: '',
     type: 'credit',
   });
 
@@ -44,24 +56,137 @@ export default function HomeScreen({ onOpenSettings }) {
   const [isManualModalVisible, setIsManualModalVisible] = useState(false);
   const [manualAmount, setManualAmount] = useState('');
   const [manualNote, setManualNote] = useState('');
-  const [selectedCustomer, setSelectedCustomer] = useState('Abebe Kebede');
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [showCustomerPicker, setShowCustomerPicker] = useState(false);
+  const [pickerSearchQuery, setPickerSearchQuery] = useState('');
 
   // Add Customer Modal State
   const [isAddCustomerModalVisible, setIsAddCustomerModalVisible] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const logoGreen = '#27E365';
   const alertRed = '#FF4D4D';
   const pageBackgroundColor = '#0E2417';
 
+  // ============================================
+  // NETWORK DETECTOR (Online / Offline)
+  // ============================================
+  useEffect(() => {
+    NetInfo.fetch().then(state => {
+      setIsOnline(state.isConnected && state.isInternetReachable);
+    });
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(state.isConnected && state.isInternetReachable);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // ============================================
+  // LOAD REAL DATA
+  // ============================================
+  const fetchData = useCallback(async () => {
+    try {
+      setError('');
+      const [custData, txData] = await Promise.all([
+        getCustomers(),
+        getTransactions(),
+      ]);
+      setCustomers(custData);
+      setTransactions(txData);
+    } catch (err) {
+      setError('መረጃ መጫን አልተሳካም። እባክዎ እንደገና ይሞክሩ።');
+      console.log('Fetch error:', err.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData().finally(() => setLoading(false));
+  }, [fetchData]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchData();
+    setRefreshing(false);
+  };
+
+  // ============================================
+  // BALANCE CALCULATOR
+  // ============================================
+  const calculateBalance = useCallback((customerId) => {
+    return transactions
+      .filter((t) => t.customer_id === customerId)
+      .reduce((sum, t) => {
+        if (t.type === 'credit') return sum + Number(t.amount);
+        if (t.type === 'payment') return sum - Number(t.amount);
+        return sum;
+      }, 0);
+  }, [transactions]);
+
+  const formatBalance = (amount) => {
+    return amount.toLocaleString() + ' ETB';
+  };
+
+  // ============================================
+  // FILTERED & SORTED LIST FOR DISPLAY
+  // SORT: Most recent transaction first
+  // ============================================
+  const filteredCustomers = customers.filter((c) => {
+    const q = searchQuery.toLowerCase();
+    return (
+      c.name.toLowerCase().includes(q) ||
+      (c.phone && c.phone.includes(q))
+    );
+  });
+
+  const displayList = filteredCustomers
+    .map((c) => {
+      const balance = calculateBalance(c.id);
+      // Find this customer's most recent transaction
+      const customerTx = transactions
+        .filter((t) => t.customer_id === c.id)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      const lastTx = customerTx[0];
+      
+      return {
+        ...c,
+        balance,
+        balanceText: formatBalance(balance),
+        isCleared: balance === 0,
+        // If they have a transaction, use that date. If not, use customer creation date.
+        sortDate: lastTx ? new Date(lastTx.created_at) : new Date(c.created_at),
+      };
+    })
+    .sort((a, b) => b.sortDate - a.sortDate); // Newest first
+
+  // ============================================
+  // CUSTOMER PICKER FILTER
+  // ============================================
+  const pickerFilteredCustomers = customers.filter((c) => {
+    const q = pickerSearchQuery.toLowerCase();
+    return (
+      c.name.toLowerCase().includes(q) ||
+      (c.phone && c.phone.includes(q))
+    );
+  });
+
+  // ============================================
+  // VOICE MOCK (Phase 10 will make this real)
+  // ============================================
   const handleMicPress = () => {
+    if (customers.length === 0) {
+      setError('እባክዎ መጀመሪያ ደንበኛ ያስገቡ');
+      return;
+    }
+    setError('');
     setIsListening(true);
-    // 6 Seconds Auto-Listening Timeout
     setTimeout(() => {
       setIsListening(false);
+      const target = customers[0];
       setParsedVoiceData({
-        customer: voiceMode === 'credit' ? 'Abebe Kebede' : 'Kebede Alemu',
+        customer: target.name,
+        customerId: target.id,
         amount: voiceMode === 'credit' ? '200' : '500',
         item: voiceMode === 'credit' ? 'ስኳር' : 'የቡና',
         type: voiceMode,
@@ -71,46 +196,109 @@ export default function HomeScreen({ onOpenSettings }) {
   };
 
   const handleEditVoiceData = () => {
-    setSelectedCustomer(parsedVoiceData.customer);
+    const cust = customers.find((c) => c.id === parsedVoiceData.customerId);
+    setSelectedCustomer(cust || null);
+    setShowCustomerPicker(false);
+    setPickerSearchQuery('');
     setManualAmount(parsedVoiceData.amount);
     setManualNote(parsedVoiceData.item);
     setVoiceMode(parsedVoiceData.type);
-    
     setShowConfirmation(false);
     setIsManualModalVisible(true);
   };
 
-  const handleSaveEntry = () => {
-    setIsManualModalVisible(false);
-    setShowConfirmation(false);
-    setManualAmount('');
-    setManualNote('');
+  // ============================================
+  // SAVE TRANSACTION (Real Database)
+  // ============================================
+  const handleSaveEntry = async () => {
+    const cust = selectedCustomer;
+    if (!cust) {
+      setError('እባክዎ ደንበኛ ይምረጡ');
+      return;
+    }
+    if (!manualAmount || isNaN(manualAmount) || Number(manualAmount) <= 0) {
+      setError('የሚሰራ መጠን ያስገቡ');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await addTransaction(
+        cust.id,
+        voiceMode,
+        manualAmount,
+        manualNote || (voiceMode === 'credit' ? 'ዱቤ' : 'ክፍያ')
+      );
+      await fetchData();
+      setIsManualModalVisible(false);
+      setShowConfirmation(false);
+      setManualAmount('');
+      setManualNote('');
+      setSelectedCustomer(null);
+      setShowCustomerPicker(false);
+      setPickerSearchQuery('');
+      setError('');
+    } catch (err) {
+      setError(err.message || 'መዝገብ አልተሳካም');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleQuickCustomerSave = () => {
-    setSelectedCustomerDetail(null);
-    setQuickAmount('');
-    setQuickItem('');
+  const handleQuickCustomerSave = async () => {
+    if (!quickAmount || isNaN(quickAmount) || Number(quickAmount) <= 0) {
+      setError('የሚሰራ መጠን ያስገቡ');
+      return;
+    }
+    if (!selectedCustomerDetail) return;
+
+    setSaving(true);
+    try {
+      await addTransaction(
+        selectedCustomerDetail.id,
+        quickType,
+        quickAmount,
+        quickItem || (quickType === 'credit' ? 'ዱቤ' : 'ክፍያ')
+      );
+      await fetchData();
+      setSelectedCustomerDetail(null);
+      setQuickAmount('');
+      setQuickItem('');
+      setError('');
+    } catch (err) {
+      setError(err.message || 'መዝገብ አልተሳካም');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleAddNewCustomer = () => {
-    if (!newCustomerName.trim()) return;
+  // ============================================
+  // ADD CUSTOMER (Real Database)
+  // ============================================
+  const handleAddNewCustomer = async () => {
+    if (!newCustomerName.trim()) {
+      setError('ስም ያስፈልጋል');
+      return;
+    }
 
-    const newContact = {
-      id: Date.now().toString(),
-      name: newCustomerName,
-      phone: newCustomerPhone || '0900000000',
-      status: '0 ETB',
-      subtext: 'አዲስ የተመዘገበ',
-      isCleared: true,
-    };
-
-    setContacts([newContact, ...contacts]);
-    setNewCustomerName('');
-    setNewCustomerPhone('');
-    setIsAddCustomerModalVisible(false);
+    setSaving(true);
+    try {
+      await createCustomer(newCustomerName.trim(), newCustomerPhone.trim());
+      await fetchData();
+      setNewCustomerName('');
+      setNewCustomerPhone('');
+      setIsAddCustomerModalVisible(false);
+      setError('');
+    } catch (err) {
+      setError(err.message || 'ደንበኛ መመዝገብ አልተሳካም');
+    } finally {
+      setSaving(false);
+    }
   };
 
+  // ============================================
+  // RENDER
+  // ============================================
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={pageBackgroundColor} />
@@ -129,7 +317,7 @@ export default function HomeScreen({ onOpenSettings }) {
             <Text style={styles.headerTitle}>ዱቤ መዝገብ</Text>
             <View style={styles.syncBadge}>
               <View style={[styles.syncDot, { backgroundColor: isOnline ? logoGreen : '#FF9F43' }]} />
-              <Text style={styles.syncText}>{isOnline ? 'የተገናኘ' : 'በስልክ የተቀመጠ'}</Text>
+              <Text style={styles.syncText}>{isOnline ? 'Online' : 'Offline'}</Text>
             </View>
           </View>
         </View>
@@ -139,12 +327,24 @@ export default function HomeScreen({ onOpenSettings }) {
         </TouchableOpacity>
       </View>
 
+      {/* Error Banner */}
+      {error ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{error}</Text>
+          <TouchableOpacity onPress={() => setError('')}>
+            <Text style={styles.errorClose}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {/* Search Input */}
       <View style={styles.searchContainer}>
         <TextInput
           style={styles.searchInput}
           placeholder="🔍 ደንበኛ ወይም ስልክ ይፈልጉ..."
           placeholderTextColor="#5A786A"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
         />
       </View>
 
@@ -154,7 +354,6 @@ export default function HomeScreen({ onOpenSettings }) {
           <>
             <Text style={styles.voiceGuideTitle}>በድምፅ ለመመዝገብ የሚፈለገውን ይምረጡ</Text>
             
-            {/* Toggle Mode: Credit vs Payment */}
             <View style={styles.toggleContainer}>
               <TouchableOpacity
                 style={[styles.toggleBtn, voiceMode === 'credit' ? { backgroundColor: alertRed } : null]}
@@ -175,7 +374,6 @@ export default function HomeScreen({ onOpenSettings }) {
               </TouchableOpacity>
             </View>
 
-            {/* Microphone Button */}
             <TouchableOpacity 
               style={[styles.topMicButton, isListening ? styles.micListeningPulse : null]} 
               onPress={handleMicPress}
@@ -183,11 +381,10 @@ export default function HomeScreen({ onOpenSettings }) {
             >
               <Text style={styles.micEmoji}>🎙️</Text>
               <Text style={styles.micText}>
-                {isListening ? 'እየሰማ ነው...' : (voiceMode === 'credit' ? 'ዱቤ ይመዝግቡ' : 'ክፍያ ይመዝግቡ')}
+                {isListening ? 'እየሰማ ነው...' : (voiceMode === 'credit' ? 'ዱቤ ይመዝግቡ' : 'ክፍያ ይመዝገቡ')}
               </Text>
             </TouchableOpacity>
 
-            {/* Dynamic Examples */}
             <Text style={styles.voiceGuideText}>
               ምሳሌ፡{' '}
               <Text style={{ color: logoGreen, fontWeight: 'bold' }}>
@@ -195,12 +392,14 @@ export default function HomeScreen({ onOpenSettings }) {
               </Text>
             </Text>
 
-            {/* Manual Entry Secondary Option */}
             <TouchableOpacity 
               style={styles.manualEntryBtn}
               onPress={() => {
                 setManualAmount('');
                 setManualNote('');
+                setSelectedCustomer(null);
+                setShowCustomerPicker(false);
+                setPickerSearchQuery('');
                 setIsManualModalVisible(true);
               }}
             >
@@ -208,7 +407,6 @@ export default function HomeScreen({ onOpenSettings }) {
             </TouchableOpacity>
           </>
         ) : (
-          /* Confirmation Flow Card */
           <View style={styles.confirmCard}>
             <Text style={styles.confirmHeader}>ለማረጋገጥ ይገምግሙ</Text>
             
@@ -238,7 +436,6 @@ export default function HomeScreen({ onOpenSettings }) {
               </View>
             </View>
 
-            {/* Action Buttons */}
             <View style={styles.modalActionRow}>
               <TouchableOpacity 
                 style={styles.cancelBtn} 
@@ -249,9 +446,18 @@ export default function HomeScreen({ onOpenSettings }) {
 
               <TouchableOpacity 
                 style={[styles.saveBtn, { backgroundColor: logoGreen }]} 
-                onPress={handleSaveEntry}
+                onPress={() => {
+                  setSelectedCustomer(customers.find(c => c.id === parsedVoiceData.customerId) || customers[0]);
+                  setManualAmount(parsedVoiceData.amount);
+                  setManualNote(parsedVoiceData.item);
+                  setVoiceMode(parsedVoiceData.type);
+                  handleSaveEntry();
+                }}
+                disabled={saving}
               >
-                <Text style={styles.saveBtnText}>✅ አጽድቅ</Text>
+                <Text style={styles.saveBtnText}>
+                  {saving ? '...' : '✅ አጽድቅ'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -260,7 +466,7 @@ export default function HomeScreen({ onOpenSettings }) {
 
       {/* Recent Transactions Header */}
       <View style={styles.directoryHeader}>
-        <Text style={styles.directoryTitle}>Recent Transactions</Text>
+        <Text style={styles.directoryTitle}>የቅርብ ጊዜ ደንበኞች</Text>
         <TouchableOpacity 
           style={[styles.addContactBtn, { backgroundColor: logoGreen }]}
           onPress={() => setIsAddCustomerModalVisible(true)}
@@ -269,32 +475,49 @@ export default function HomeScreen({ onOpenSettings }) {
         </TouchableOpacity>
       </View>
 
-      {/* Recent Transactions List */}
-      <FlatList
-        data={contacts}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <TouchableOpacity 
-            style={styles.contactCard}
-            onPress={() => setSelectedCustomerDetail(item)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarText}>{item.name.charAt(0)}</Text>
+      {/* Loading State */}
+      {loading ? (
+        <View style={styles.centerBox}>
+          <ActivityIndicator size="large" color={logoGreen} />
+          <Text style={styles.loadingText}>መረጃ በመጫን ላይ...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={displayList}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={logoGreen} />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyEmoji}>📭</Text>
+              <Text style={styles.emptyTitle}>ምንም ደንበኛ አልተገኘም</Text>
+              <Text style={styles.emptySub}>+ በመጫን አዲስ ደንበኛ ያስገቡ</Text>
             </View>
+          }
+          renderItem={({ item }) => (
+            <TouchableOpacity 
+              style={styles.contactCard}
+              onPress={() => setSelectedCustomerDetail(item)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.avatarPlaceholder}>
+                <Text style={styles.avatarText}>{item.name.charAt(0)}</Text>
+              </View>
 
-            <View style={styles.contactDetails}>
-              <Text style={styles.contactName}>{item.name}</Text>
-              <Text style={styles.contactSubtext}>{item.subtext}</Text>
-            </View>
+              <View style={styles.contactDetails}>
+                <Text style={styles.contactName}>{item.name}</Text>
+                <Text style={styles.contactSubtext}>{item.phone || 'ስልክ አልተመዘገበም'}</Text>
+              </View>
 
-            <Text style={[styles.statusText, { color: item.isCleared ? logoGreen : alertRed }]}>
-              {item.status}
-            </Text>
-          </TouchableOpacity>
-        )}
-      />
+              <Text style={[styles.statusText, { color: item.isCleared ? logoGreen : alertRed }]}>
+                {item.balanceText}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      )}
 
       {/* CUSTOMER QUICK ENTRY & HISTORY MODAL */}
       <Modal
@@ -307,28 +530,25 @@ export default function HomeScreen({ onOpenSettings }) {
           <View style={styles.modalContent}>
             {selectedCustomerDetail && (
               <>
-                {/* Header Info */}
                 <View style={{ alignItems: 'center', marginBottom: 10 }}>
                   <Text style={{ color: '#FFFFFF', fontSize: 17, fontWeight: 'bold' }}>
                     {selectedCustomerDetail.name}
                   </Text>
-                  <Text style={{ color: '#A8C5B8', fontSize: 11 }}>{selectedCustomerDetail.phone}</Text>
+                  <Text style={{ color: '#A8C5B8', fontSize: 11 }}>{selectedCustomerDetail.phone || '---'}</Text>
                   
                   <View style={{ marginTop: 8, padding: 8, backgroundColor: '#0E2417', borderRadius: 8, width: '100%', alignItems: 'center' }}>
                     <Text style={{ color: '#A8C5B8', fontSize: 10 }}>የቀረ የዱቤ መጠን (Total Balance)</Text>
                     <Text style={{ color: selectedCustomerDetail.isCleared ? logoGreen : alertRed, fontSize: 18, fontWeight: 'bold' }}>
-                      {selectedCustomerDetail.status}
+                      {selectedCustomerDetail.balanceText}
                     </Text>
                   </View>
                 </View>
 
-                {/* Quick Transaction Entry Box */}
                 <View style={{ backgroundColor: '#0E2417', padding: 10, borderRadius: 8, marginBottom: 10 }}>
                   <Text style={{ color: '#27E365', fontSize: 11, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' }}>
-                    አዲስ ግብይት መዝግብ (Quick Record)
+                    አዲስ ግብይት መዝገብ (Quick Record)
                   </Text>
 
-                  {/* Toggle Type */}
                   <View style={{ flexDirection: 'row', backgroundColor: '#183424', borderRadius: 6, padding: 2, marginBottom: 8 }}>
                     <TouchableOpacity 
                       style={[{ flex: 1, paddingVertical: 4, alignItems: 'center', borderRadius: 4 }, quickType === 'credit' ? { backgroundColor: alertRed } : null]}
@@ -344,7 +564,6 @@ export default function HomeScreen({ onOpenSettings }) {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Inputs for Money and Item */}
                   <TextInput
                     style={[styles.modalInput, { marginBottom: 6, paddingVertical: 6, fontSize: 12 }]}
                     placeholder="የገንዘብ መጠን (ETB)"
@@ -362,25 +581,41 @@ export default function HomeScreen({ onOpenSettings }) {
                   />
                 </View>
 
-                {/* Last Transaction Summary */}
                 <Text style={{ color: '#A8C5B8', fontSize: 11, marginBottom: 4, fontWeight: '600' }}>
                   የመጨረሻ ግብይት (Last Transaction):
                 </Text>
                 <View style={{ backgroundColor: '#0E2417', borderRadius: 6, padding: 8, marginBottom: 12 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={{ color: '#FFFFFF', fontSize: 11 }}>• ስኳር (2 ኪሎ)</Text>
-                    <Text style={{ color: alertRed, fontWeight: 'bold', fontSize: 11 }}>+200 ETB</Text>
-                  </View>
+                  {(() => {
+                    const lastTx = transactions
+                      .filter((t) => t.customer_id === selectedCustomerDetail.id)
+                      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+                    if (lastTx) {
+                      return (
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                          <Text style={{ color: '#FFFFFF', fontSize: 11 }}>• {lastTx.item || (lastTx.type === 'credit' ? 'ዱቤ' : 'ክፍያ')}</Text>
+                          <Text style={{ color: lastTx.type === 'credit' ? alertRed : logoGreen, fontWeight: 'bold', fontSize: 11 }}>
+                            {lastTx.type === 'credit' ? '+' : '-'}{lastTx.amount} ETB
+                          </Text>
+                        </View>
+                      );
+                    }
+                    return <Text style={{ color: '#5A786A', fontSize: 11 }}>እስካሁን ግብይት የለም</Text>;
+                  })()}
                 </View>
 
-                {/* Modal Buttons */}
                 <View style={styles.modalActionRow}>
                   <TouchableOpacity style={styles.cancelBtn} onPress={() => setSelectedCustomerDetail(null)}>
                     <Text style={styles.cancelBtnText}>ዝጋ</Text>
                   </TouchableOpacity>
                   
-                  <TouchableOpacity style={[styles.saveBtn, { backgroundColor: logoGreen }]} onPress={handleQuickCustomerSave}>
-                    <Text style={styles.saveBtnText}>መዝግብ</Text>
+                  <TouchableOpacity 
+                    style={[styles.saveBtn, { backgroundColor: logoGreen }]} 
+                    onPress={handleQuickCustomerSave}
+                    disabled={saving}
+                  >
+                    <Text style={styles.saveBtnText}>
+                      {saving ? '...' : 'መዝገብ'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -398,7 +633,7 @@ export default function HomeScreen({ onOpenSettings }) {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>መረጃውን ያርሙ / ይመዝግቡ</Text>
+            <Text style={styles.modalTitle}>መረጃውን ያርሙ / ይመዝገቡ</Text>
 
             <View style={styles.modalToggleContainer}>
               <TouchableOpacity
@@ -420,10 +655,65 @@ export default function HomeScreen({ onOpenSettings }) {
               </TouchableOpacity>
             </View>
 
+            {/* CUSTOMER PICKER WITH SEARCH */}
             <Text style={styles.inputLabel}>ደንበኛ ይምረጡ</Text>
-            <View style={styles.modalInput}>
-              <Text style={{ color: '#FFFFFF' }}>{selectedCustomer}</Text>
-            </View>
+            <TouchableOpacity 
+              style={[styles.modalInput, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]} 
+              onPress={() => setShowCustomerPicker(!showCustomerPicker)}
+            >
+              <Text style={{ color: '#FFFFFF' }}>
+                {selectedCustomer ? selectedCustomer.name : 'እዚህ ጠቅ ያድርጉ ለመምረጥ...'}
+              </Text>
+              <Text style={{ color: '#27E365', fontSize: 12 }}>
+                {showCustomerPicker ? '▲ ዝጋ' : '▼ ተጨማሪ'}
+              </Text>
+            </TouchableOpacity>
+
+            {showCustomerPicker && (
+              <View style={{ maxHeight: 220, backgroundColor: '#0E2417', borderRadius: 8, marginBottom: 14, borderWidth: 1, borderColor: 'rgba(39, 227, 101, 0.3)' }}>
+                <View style={{ padding: 8, borderBottomWidth: 1, borderBottomColor: '#183424' }}>
+                  <TextInput
+                    style={{ backgroundColor: '#183424', color: '#FFFFFF', borderRadius: 6, paddingVertical: 6, paddingHorizontal: 10, fontSize: 12 }}
+                    placeholder="🔍 ደንበኛ ይፈልጉ..."
+                    placeholderTextColor="#5A786A"
+                    value={pickerSearchQuery}
+                    onChangeText={setPickerSearchQuery}
+                    autoFocus={true}
+                  />
+                </View>
+                
+                <FlatList
+                  data={pickerFilteredCustomers}
+                  keyExtractor={(item) => item.id}
+                  keyboardShouldPersistTaps="handled"
+                  ListEmptyComponent={
+                    <View style={{ padding: 12, alignItems: 'center' }}>
+                      <Text style={{ color: '#5A786A', fontSize: 12 }}>ምንም ደንበኛ አልተገኘም</Text>
+                    </View>
+                  }
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={{ 
+                        padding: 10, 
+                        borderBottomWidth: 1, 
+                        borderBottomColor: '#183424',
+                        backgroundColor: selectedCustomer?.id === item.id ? 'rgba(39, 227, 101, 0.15)' : 'transparent'
+                      }}
+                      onPress={() => {
+                        setSelectedCustomer(item);
+                        setShowCustomerPicker(false);
+                        setPickerSearchQuery('');
+                      }}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontWeight: selectedCustomer?.id === item.id ? 'bold' : 'normal' }}>
+                        {selectedCustomer?.id === item.id ? '✓ ' : ''}{item.name}
+                      </Text>
+                      <Text style={{ color: '#5A786A', fontSize: 11 }}>{item.phone || ''}</Text>
+                    </TouchableOpacity>
+                  )}
+                />
+              </View>
+            )}
 
             <Text style={styles.inputLabel}>መጠን (በ ETB)</Text>
             <TextInput
@@ -447,7 +737,11 @@ export default function HomeScreen({ onOpenSettings }) {
             <View style={styles.modalActionRow}>
               <TouchableOpacity 
                 style={styles.cancelBtn}
-                onPress={() => setIsManualModalVisible(false)}
+                onPress={() => {
+                  setIsManualModalVisible(false);
+                  setShowCustomerPicker(false);
+                  setPickerSearchQuery('');
+                }}
               >
                 <Text style={styles.cancelBtnText}>ሰርዝ</Text>
               </TouchableOpacity>
@@ -455,8 +749,11 @@ export default function HomeScreen({ onOpenSettings }) {
               <TouchableOpacity 
                 style={[styles.saveBtn, { backgroundColor: logoGreen }]}
                 onPress={handleSaveEntry}
+                disabled={saving}
               >
-                <Text style={styles.saveBtnText}>መዝግብ</Text>
+                <Text style={styles.saveBtnText}>
+                  {saving ? '...' : 'መዝገብ'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -472,7 +769,7 @@ export default function HomeScreen({ onOpenSettings }) {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>አዲስ ደንበኛ መዝግብ</Text>
+            <Text style={styles.modalTitle}>አዲስ ደንበኛ መዝገብ</Text>
 
             <Text style={styles.inputLabel}>ሙሉ ስም</Text>
             <TextInput
@@ -504,8 +801,11 @@ export default function HomeScreen({ onOpenSettings }) {
               <TouchableOpacity 
                 style={[styles.saveBtn, { backgroundColor: logoGreen }]}
                 onPress={handleAddNewCustomer}
+                disabled={saving}
               >
-                <Text style={styles.saveBtnText}>አስገባ</Text>
+                <Text style={styles.saveBtnText}>
+                  {saving ? '...' : 'አስገባ'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -569,6 +869,29 @@ const styles = StyleSheet.create({
   },
   settingsIcon: {
     fontSize: 20,
+  },
+  errorBanner: {
+    backgroundColor: 'rgba(255, 77, 77, 0.15)',
+    borderRadius: 8,
+    marginHorizontal: 16,
+    marginVertical: 4,
+    padding: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.3)',
+  },
+  errorBannerText: {
+    color: '#FF4D4D',
+    fontSize: 12,
+    flex: 1,
+  },
+  errorClose: {
+    color: '#FF4D4D',
+    fontSize: 16,
+    fontWeight: 'bold',
+    paddingHorizontal: 6,
   },
   searchContainer: {
     paddingHorizontal: 16,
@@ -716,9 +1039,37 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 11,
   },
+  centerBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#A8C5B8',
+    marginTop: 10,
+    fontSize: 13,
+  },
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 20,
+  },
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 40,
+  },
+  emptyEmoji: {
+    fontSize: 40,
+    marginBottom: 10,
+  },
+  emptyTitle: {
+    color: '#A8C5B8',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  emptySub: {
+    color: '#5A786A',
+    fontSize: 12,
+    marginTop: 4,
   },
   contactCard: {
     flexDirection: 'row',

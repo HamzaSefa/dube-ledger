@@ -3,4 +3,4 @@ node_modules/
 .expo/
 npm-debug.log
 *.log
-
+config.js

@@ -10,14 +10,39 @@ import {
   ScrollView,
   StatusBar,
   Image,
+  ActivityIndicator,
 } from 'react-native';
+import { useAuth } from '../context/AuthContext';
 
-export default function LoginScreen() {
+export default function LoginScreen({ navigation }) {
+  const { signIn } = useAuth();
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const logoGreen = '#27E365';
   const mutedTextColor = '#A8C5B8';
+
+  const handleLogin = async () => {
+    // Basic validation
+    if (!phone.trim() || !password) {
+      setError('ስልክ ቁጥር እና የይለፍ ቃል ያስፈልጋል');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      await signIn(phone.trim(), password);
+      // If successful, AuthContext updates → App.js shows MainApp automatically
+    } catch (err) {
+      setError('ስልክ ቁጥር ወይም የይለፍ ቃል ተሳስተዋል');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -28,7 +53,6 @@ export default function LoginScreen() {
       
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
-        {/* Header Section */}
         <View style={styles.header}>
           <View style={styles.logoCircle}>
             <Image 
@@ -43,17 +67,27 @@ export default function LoginScreen() {
           </Text>
         </View>
 
-        {/* Form Section */}
         <View style={styles.form}>
           <Text style={styles.formTitle}>ይግቡ (Log In)</Text>
+          
+          {/* Error Message */}
+          {error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
           
           <TextInput
             style={styles.input}
             placeholder="ስልክ ቁጥር (Phone Number)"
             placeholderTextColor="#5A786A"
             value={phone}
-            onChangeText={setPhone}
+            onChangeText={(text) => {
+              setPhone(text);
+              setError('');
+            }}
             keyboardType="phone-pad"
+            editable={!loading}
           />
           
           <TextInput
@@ -62,22 +96,37 @@ export default function LoginScreen() {
             placeholderTextColor="#5A786A"
             secureTextEntry
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(text) => {
+              setPassword(text);
+              setError('');
+            }}
+            editable={!loading}
           />
 
-          {/* Forgot Password Link (Telegram Bot Flow) */}
           <TouchableOpacity style={styles.forgotPasswordLink}>
             <Text style={[styles.forgotPasswordText, { color: mutedTextColor }]}>
               የይለፍ ቃል ረስተዋል? (Forgot Password?)
             </Text>
           </TouchableOpacity>
           
-          <TouchableOpacity style={[styles.button, { backgroundColor: logoGreen }]}>
-            <Text style={styles.buttonText}>ይግቡ</Text>
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: logoGreen }]} 
+            onPress={handleLogin}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            {loading ? (
+              <ActivityIndicator color="#0E2417" />
+            ) : (
+              <Text style={styles.buttonText}>ይግቡ</Text>
+            )}
           </TouchableOpacity>
           
-          {/* Link back to Sign Up */}
-          <TouchableOpacity style={styles.signUpLink}>
+          <TouchableOpacity 
+            style={styles.signUpLink}
+            onPress={() => navigation.navigate('SignUp')}
+            disabled={loading}
+          >
             <Text style={[styles.signUpLinkText, { color: mutedTextColor }]}>
               አካውንት የለዎትም? ይመዝገቡ (Sign Up)
             </Text>
@@ -136,6 +185,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 18,
     textAlign: 'center',
+  },
+  errorBox: {
+    backgroundColor: 'rgba(255, 77, 77, 0.15)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.3)',
+  },
+  errorText: {
+    color: '#FF4D4D',
+    fontSize: 13,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   input: {
     backgroundColor: '#FFFFFF',
