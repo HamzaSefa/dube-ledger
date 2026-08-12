@@ -129,8 +129,15 @@ export default function HomeScreen({ onOpenSettings }) {
   };
 
   // ============================================
+  // PHONE VALIDATOR
+  // ============================================
+  const validatePhone = (phone) => {
+    const clean = phone.replace(/\s/g, '');
+    return /^(09|07)\d{8}$/.test(clean);
+  };
+
+  // ============================================
   // FILTERED & SORTED LIST FOR DISPLAY
-  // SORT: Most recent transaction first
   // ============================================
   const filteredCustomers = customers.filter((c) => {
     const q = searchQuery.toLowerCase();
@@ -143,22 +150,20 @@ export default function HomeScreen({ onOpenSettings }) {
   const displayList = filteredCustomers
     .map((c) => {
       const balance = calculateBalance(c.id);
-      // Find this customer's most recent transaction
       const customerTx = transactions
         .filter((t) => t.customer_id === c.id)
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       const lastTx = customerTx[0];
-      
+
       return {
         ...c,
         balance,
         balanceText: formatBalance(balance),
         isCleared: balance === 0,
-        // If they have a transaction, use that date. If not, use customer creation date.
         sortDate: lastTx ? new Date(lastTx.created_at) : new Date(c.created_at),
       };
     })
-    .sort((a, b) => b.sortDate - a.sortDate); // Newest first
+    .sort((a, b) => b.sortDate - a.sortDate);
 
   // ============================================
   // CUSTOMER PICKER FILTER
@@ -273,11 +278,15 @@ export default function HomeScreen({ onOpenSettings }) {
   };
 
   // ============================================
-  // ADD CUSTOMER (Real Database)
+  // ADD CUSTOMER (Real Database + Phone Validation)
   // ============================================
   const handleAddNewCustomer = async () => {
     if (!newCustomerName.trim()) {
       setError('ስም ያስፈልጋል');
+      return;
+    }
+    if (newCustomerPhone && !validatePhone(newCustomerPhone)) {
+      setError('ስልክ ቁጥር 10 አሃዝ መሆን አለበት (09... ወይም 07...)');
       return;
     }
 
@@ -314,7 +323,7 @@ export default function HomeScreen({ onOpenSettings }) {
             />
           </View>
           <View>
-            <Text style={styles.headerTitle}>ዱቤ መዝገብ</Text>
+            <Text style={styles.headerTitle}>ዱቤ ደብተር</Text>
             <View style={styles.syncBadge}>
               <View style={[styles.syncDot, { backgroundColor: isOnline ? logoGreen : '#FF9F43' }]} />
               <Text style={styles.syncText}>{isOnline ? 'Online' : 'Offline'}</Text>
@@ -353,7 +362,7 @@ export default function HomeScreen({ onOpenSettings }) {
         {!showConfirmation ? (
           <>
             <Text style={styles.voiceGuideTitle}>በድምፅ ለመመዝገብ የሚፈለገውን ይምረጡ</Text>
-            
+
             <View style={styles.toggleContainer}>
               <TouchableOpacity
                 style={[styles.toggleBtn, voiceMode === 'credit' ? { backgroundColor: alertRed } : null]}
@@ -381,7 +390,7 @@ export default function HomeScreen({ onOpenSettings }) {
             >
               <Text style={styles.micEmoji}>🎙️</Text>
               <Text style={styles.micText}>
-                {isListening ? 'እየሰማ ነው...' : (voiceMode === 'credit' ? 'ዱቤ ይመዝግቡ' : 'ክፍያ ይመዝገቡ')}
+                {isListening ? 'እየሰማ ነው...' : (voiceMode === 'credit' ? 'ዱቤ ይመዝገቡ' : 'ክፍያ ይመዝገቡ')}
               </Text>
             </TouchableOpacity>
 
@@ -408,8 +417,8 @@ export default function HomeScreen({ onOpenSettings }) {
           </>
         ) : (
           <View style={styles.confirmCard}>
-            <Text style={styles.confirmHeader}>ለማረጋገጥ ይገምግሙ</Text>
-            
+            <Text style={styles.confirmHeader}>ለማረጋገጥ ይገምግሩ</Text>
+
             <View style={styles.parsedDataGrid}>
               <View style={styles.parsedChip}>
                 <Text style={styles.parsedLabel}>ደንበኛ:</Text>
@@ -535,7 +544,7 @@ export default function HomeScreen({ onOpenSettings }) {
                     {selectedCustomerDetail.name}
                   </Text>
                   <Text style={{ color: '#A8C5B8', fontSize: 11 }}>{selectedCustomerDetail.phone || '---'}</Text>
-                  
+
                   <View style={{ marginTop: 8, padding: 8, backgroundColor: '#0E2417', borderRadius: 8, width: '100%', alignItems: 'center' }}>
                     <Text style={{ color: '#A8C5B8', fontSize: 10 }}>የቀረ የዱቤ መጠን (Total Balance)</Text>
                     <Text style={{ color: selectedCustomerDetail.isCleared ? logoGreen : alertRed, fontSize: 18, fontWeight: 'bold' }}>
@@ -605,9 +614,9 @@ export default function HomeScreen({ onOpenSettings }) {
 
                 <View style={styles.modalActionRow}>
                   <TouchableOpacity style={styles.cancelBtn} onPress={() => setSelectedCustomerDetail(null)}>
-                    <Text style={styles.cancelBtnText}>ዝጋ</Text>
+                    <Text style={styles.cancelBtnText}>ተመለስ</Text>
                   </TouchableOpacity>
-                  
+
                   <TouchableOpacity 
                     style={[styles.saveBtn, { backgroundColor: logoGreen }]} 
                     onPress={handleQuickCustomerSave}
@@ -681,7 +690,7 @@ export default function HomeScreen({ onOpenSettings }) {
                     autoFocus={true}
                   />
                 </View>
-                
+
                 <FlatList
                   data={pickerFilteredCustomers}
                   keyExtractor={(item) => item.id}
@@ -743,7 +752,7 @@ export default function HomeScreen({ onOpenSettings }) {
                   setPickerSearchQuery('');
                 }}
               >
-                <Text style={styles.cancelBtnText}>ሰርዝ</Text>
+                <Text style={styles.cancelBtnText}>ተመለስ</Text>
               </TouchableOpacity>
 
               <TouchableOpacity 
@@ -769,6 +778,16 @@ export default function HomeScreen({ onOpenSettings }) {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
+            {/* Error banner INSIDE the modal */}
+            {error ? (
+              <View style={styles.modalErrorBanner}>
+                <Text style={styles.modalErrorText}>{error}</Text>
+                <TouchableOpacity onPress={() => setError('')}>
+                  <Text style={styles.modalErrorClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
             <Text style={styles.modalTitle}>አዲስ ደንበኛ መዝገብ</Text>
 
             <Text style={styles.inputLabel}>ሙሉ ስም</Text>
@@ -795,7 +814,7 @@ export default function HomeScreen({ onOpenSettings }) {
                 style={styles.cancelBtn}
                 onPress={() => setIsAddCustomerModalVisible(false)}
               >
-                <Text style={styles.cancelBtnText}>ሰርዝ</Text>
+                <Text style={styles.cancelBtnText}>ተመለስ</Text>
               </TouchableOpacity>
 
               <TouchableOpacity 
@@ -1147,6 +1166,10 @@ const styles = StyleSheet.create({
     color: '#A8C5B8',
     fontWeight: '600',
   },
+  activeToggleText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
   inputLabel: {
     color: '#A8C5B8',
     fontSize: 12,
@@ -1188,5 +1211,27 @@ const styles = StyleSheet.create({
   saveBtnText: {
     color: '#0E2417',
     fontWeight: 'bold',
+  },
+  modalErrorBanner: {
+    backgroundColor: 'rgba(255, 77, 77, 0.15)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.3)',
+  },
+  modalErrorText: {
+    color: '#FF4D4D',
+    fontSize: 12,
+    flex: 1,
+  },
+  modalErrorClose: {
+    color: '#FF4D4D',
+    fontSize: 16,
+    fontWeight: 'bold',
+    paddingHorizontal: 6,
   },
 });

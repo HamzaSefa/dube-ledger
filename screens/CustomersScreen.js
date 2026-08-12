@@ -13,12 +13,14 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import {
   getCustomers,
   createCustomer,
   getTransactions,
   addTransaction,
   updateTransaction,
+  deleteTransaction,
   deleteCustomer,
   updateCustomer,
 } from '../api';
@@ -26,13 +28,15 @@ import {
 export default function CustomersScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  
+
   // Modals
   const [isAddCustomerVisible, setIsAddCustomerVisible] = useState(false);
   const [isHistoryModalVisible, setIsHistoryModalVisible] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [isDeleteConfirmVisible, setIsDeleteConfirmVisible] = useState(false);
   const [isEditCustomerVisible, setIsEditCustomerVisible] = useState(false);
+  const [isDeleteTxConfirmVisible, setIsDeleteTxConfirmVisible] = useState(false);
+  const [transactionToDelete, setTransactionToDelete] = useState(null);
 
   // Form States for Add Customer
   const [newCustomerName, setNewCustomerName] = useState('');
@@ -53,11 +57,11 @@ export default function CustomersScreen() {
   const [editType, setEditType] = useState('credit');
 
   // Sorting
-  const [sortMode, setSortMode] = useState('lastTransaction'); // 'lastTransaction' | 'name' | 'debtAmount' | 'newestCustomer'
+  const [sortMode, setSortMode] = useState('lastTransaction');
   const [showSortOptions, setShowSortOptions] = useState(false);
 
   // Safe Delete + Undo
-  const [pendingDelete, setPendingDelete] = useState(null); // { customer, timerId }
+  const [pendingDelete, setPendingDelete] = useState(null);
   const undoTimerRef = useRef(null);
 
   // Data
@@ -73,7 +77,7 @@ export default function CustomersScreen() {
   const pageBackgroundColor = '#0E2417';
 
   // ============================================
-  // LOAD DATA (returns fresh data for immediate use)
+  // LOAD DATA
   // ============================================
   const fetchData = useCallback(async () => {
     try {
@@ -145,9 +149,8 @@ export default function CustomersScreen() {
   // SORTING
   // ============================================
   const getSortedAndFiltered = () => {
-    // Filter by search
     let list = customers.filter((c) => {
-      if (pendingDelete && pendingDelete.customer.id === c.id) return false; // Hide pending delete
+      if (pendingDelete && pendingDelete.customer.id === c.id) return false;
       const q = searchQuery.toLowerCase();
       return (
         c.name.toLowerCase().includes(q) ||
@@ -155,7 +158,6 @@ export default function CustomersScreen() {
       );
     });
 
-    // Map with balances
     const mapped = list.map((c) => {
       const balance = calculateBalance(c.id);
       const tx = getCustomerTransactions(c.id);
@@ -170,7 +172,6 @@ export default function CustomersScreen() {
       };
     });
 
-    // Sort
     switch (sortMode) {
       case 'name':
         return mapped.sort((a, b) => a.name.localeCompare(b.name));
@@ -248,8 +249,7 @@ export default function CustomersScreen() {
         phone: editCustomerPhone.trim(),
       });
       const fresh = await fetchData();
-      
-      // Refresh selected customer
+
       const updated = fresh.customers.find(c => c.id === selectedCustomer.id);
       if (updated) {
         const tx = getCustomerTransactions(updated.id, fresh.transactions);
@@ -262,7 +262,7 @@ export default function CustomersScreen() {
           isCleared: bal === 0,
         });
       }
-      
+
       setIsEditCustomerVisible(false);
       setError('');
     } catch (err) {
@@ -291,17 +291,13 @@ export default function CustomersScreen() {
         quickItem || (quickType === 'credit' ? 'ዱቤ' : 'ክፍያ')
       );
       const fresh = await fetchData();
-      
+
       const updatedTx = getCustomerTransactions(selectedCustomer.id, fresh.transactions);
       const updatedBalance = calculateBalance(selectedCustomer.id, fresh.transactions);
-      setSelectedCustomer({
-        ...selectedCustomer,
-        history: updatedTx,
-        balance: updatedBalance,
-        balanceText: formatBalance(updatedBalance),
-        isCleared: updatedBalance === 0,
-      });
-      
+
+      // FIX 1: Auto-close the detail modal after save
+      setSelectedCustomer(null);
+
       setQuickAmount('');
       setQuickItem('');
       setError('');
@@ -336,10 +332,9 @@ export default function CustomersScreen() {
         amount: Number(editAmount),
         type: editType,
       });
-      
-      // Fetch fresh data and IMMEDIATELY rebuild selected customer
+
       const fresh = await fetchData();
-      
+
       if (selectedCustomer) {
         const updatedTx = getCustomerTransactions(selectedCustomer.id, fresh.transactions);
         const updatedBalance = calculateBalance(selectedCustomer.id, fresh.transactions);
@@ -351,7 +346,7 @@ export default function CustomersScreen() {
           isCleared: updatedBalance === 0,
         });
       }
-      
+
       setEditingTransaction(null);
       setEditItem('');
       setEditAmount('');
@@ -359,6 +354,45 @@ export default function CustomersScreen() {
       setError('');
     } catch (err) {
       setError(err.message || 'ማዘመን አልተሳካም');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ============================================
+  // DELETE TRANSACTION
+  // ============================================
+  const openDeleteTransaction = (item) => {
+    setTransactionToDelete(item);
+    setIsDeleteTxConfirmVisible(true);
+  };
+
+  const confirmDeleteTransaction = async () => {
+    if (!transactionToDelete) return;
+
+    setSaving(true);
+    try {
+      await deleteTransaction(transactionToDelete.id);
+      const fresh = await fetchData();
+
+      if (selectedCustomer) {
+        const updatedTx = getCustomerTransactions(selectedCustomer.id, fresh.transactions);
+        const updatedBalance = calculateBalance(selectedCustomer.id, fresh.transactions);
+        setSelectedCustomer({
+          ...selectedCustomer,
+          history: updatedTx,
+          balance: updatedBalance,
+          balanceText: formatBalance(updatedBalance),
+          isCleared: updatedBalance === 0,
+        });
+      }
+
+      setIsDeleteTxConfirmVisible(false);
+      setTransactionToDelete(null);
+      setEditingTransaction(null);
+      setError('');
+    } catch (err) {
+      setError(err.message || 'መሰረዝ አልተሳካም');
     } finally {
       setSaving(false);
     }
@@ -376,7 +410,6 @@ export default function CustomersScreen() {
     setIsDeleteConfirmVisible(false);
     setSelectedCustomer(null);
 
-    // Start undo timer (5 seconds)
     const timerId = setTimeout(async () => {
       setPendingDelete(null);
       try {
@@ -402,7 +435,6 @@ export default function CustomersScreen() {
     setPendingDelete(null);
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
@@ -449,7 +481,7 @@ export default function CustomersScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Error Banner */}
+      {/* Error Banner (main screen) */}
       {error ? (
         <View style={styles.errorBanner}>
           <Text style={styles.errorBannerText}>{error}</Text>
@@ -553,7 +585,7 @@ export default function CustomersScreen() {
         />
       )}
 
-      {/* CUSTOMER DETAIL MODAL */}
+      {/* ===== CUSTOMER DETAIL MODAL (PROFESSIONAL UI) ===== */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -561,109 +593,97 @@ export default function CustomersScreen() {
         onRequestClose={() => setSelectedCustomer(null)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={styles.detailModalContent}>
             {selectedCustomer && (
               <>
-                <View style={{ alignItems: 'center', marginBottom: 10 }}>
-                  <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' }}>
-                    {selectedCustomer.name}
-                  </Text>
-                  <Text style={{ color: '#A8C5B8', fontSize: 12 }}>{selectedCustomer.phone || '---'}</Text>
-
-                  <View style={styles.balanceBadge}>
-                    <Text style={{ color: '#A8C5B8', fontSize: 11 }}>የተጠራቀመ ዱቤ (Balance)</Text>
-                    <Text style={{ color: selectedCustomer.isCleared ? logoGreen : alertRed, fontSize: 20, fontWeight: 'bold' }}>
-                      {selectedCustomer.balanceText}
-                    </Text>
+                {/* Profile Header */}
+                <View style={styles.detailHeader}>
+                  <View style={styles.detailAvatar}>
+                    <Text style={styles.detailAvatarText}>{selectedCustomer.name.charAt(0)}</Text>
                   </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={styles.detailName}>{selectedCustomer.name}</Text>
+                    <Text style={styles.detailPhone}>{selectedCustomer.phone || 'ስልክ አልተመዘገበም'}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setSelectedCustomer(null)} style={{ padding: 4 }}>
+                    <Ionicons name="close" size={22} color="#A8C5B8" />
+                  </TouchableOpacity>
                 </View>
 
-                {/* Quick Transaction Entry Box */}
-                <View style={styles.quickRecordBox}>
-                  <Text style={{ color: logoGreen, fontSize: 12, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' }}>
-                    አዲስ ግብይት መዝገብ (New Entry)
+                {/* Big Balance Card */}
+                <View style={styles.balanceCard}>
+                  <Text style={styles.balanceCardLabel}>የተጠራቀመ ዱቤ</Text>
+                  <Text style={[styles.balanceCardValue, { color: selectedCustomer.isCleared ? logoGreen : alertRed }]}>
+                    {selectedCustomer.balanceText}
                   </Text>
+                  <Text style={styles.balanceCardSub}>
+                    {selectedCustomer.isCleared ? '✅ ሁሉንም ከፍሏል' : '❌ ዕዳ አለ'}
+                  </Text>
+                </View>
 
-                  <View style={{ flexDirection: 'row', backgroundColor: '#183424', borderRadius: 6, padding: 2, marginBottom: 12 }}>
+                {/* Horizontal Action Buttons */}
+                <View style={styles.actionRow}>
+                  <TouchableOpacity style={styles.actionBtn} onPress={() => setIsHistoryModalVisible(true)}>
+                    <Ionicons name="time-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.actionBtnText}>ታሪክ</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.actionBtn} onPress={openEditCustomer}>
+                    <Ionicons name="create-outline" size={20} color="#27E365" />
+                    <Text style={[styles.actionBtnText, { color: '#27E365' }]}>ፕሮፋይል</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.actionBtn, { borderColor: 'rgba(255,77,77,0.3)' }]} onPress={handleDeletePress}>
+                    <Ionicons name="trash-outline" size={20} color="#FF4D4D" />
+                    <Text style={[styles.actionBtnText, { color: '#FF4D4D' }]}>ሰርዝ</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Quick Entry Section */}
+                <View style={styles.quickEntryCard}>
+                  <Text style={styles.quickEntryTitle}>አዲስ ግብይት</Text>
+
+                  <View style={styles.quickToggleRow}>
                     <TouchableOpacity
-                      style={[{ flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 4 }, quickType === 'credit' ? { backgroundColor: alertRed } : null]}
+                      style={[styles.quickToggle, quickType === 'credit' && styles.quickToggleActiveRed]}
                       onPress={() => setQuickType('credit')}
                     >
-                      <Text style={{ color: '#FFF', fontSize: 12, fontWeight: 'bold' }}>🔴 ዱቤ</Text>
+                      <Text style={[styles.quickToggleText, quickType === 'credit' && styles.quickToggleTextActive]}>
+                        🔴 ዱቤ
+                      </Text>
                     </TouchableOpacity>
-
                     <TouchableOpacity
-                      style={[{ flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 4 }, quickType === 'payment' ? { backgroundColor: logoGreen } : null]}
+                      style={[styles.quickToggle, quickType === 'payment' && styles.quickToggleActiveGreen]}
                       onPress={() => setQuickType('payment')}
                     >
-                      <Text style={{ color: quickType === 'payment' ? '#0E2417' : '#A8C5B8', fontSize: 12, fontWeight: 'bold' }}>🟢 ክፍያ</Text>
+                      <Text style={[styles.quickToggleText, quickType === 'payment' && styles.quickToggleTextActive]}>
+                        🟢 ክፍያ
+                      </Text>
                     </TouchableOpacity>
                   </View>
 
-                  <Text style={styles.inputLabel}>የገንዘብ መጠን (በ ETB)</Text>
                   <TextInput
-                    style={[styles.modalInput, { marginBottom: 10 }]}
-                    placeholder="ምሳሌ፡ 200"
+                    style={styles.quickInput}
+                    placeholder="መጠን (ETB)"
                     placeholderTextColor="#5A786A"
                     keyboardType="numeric"
                     value={quickAmount}
                     onChangeText={setQuickAmount}
                   />
-
-                  <Text style={styles.inputLabel}>የዕቃው ዓይነት / ማስታወሻ</Text>
                   <TextInput
-                    style={[styles.modalInput, { marginBottom: 12 }]}
-                    placeholder="ምሳሌ፡ ስኳር ወይም ዘይት"
+                    style={styles.quickInput}
+                    placeholder="የዕቃው ዓይነት / ማስታወሻ"
                     placeholderTextColor="#5A786A"
                     value={quickItem}
                     onChangeText={setQuickItem}
                   />
 
                   <TouchableOpacity
-                    style={[styles.saveBtn, { backgroundColor: logoGreen, paddingVertical: 10 }]}
+                    style={[styles.quickSaveBtn, { backgroundColor: logoGreen }]}
                     onPress={handleSaveQuickTransaction}
                     disabled={saving}
                   >
-                    <Text style={styles.saveBtnText}>
-                      {saving ? '...' : 'መዝገብ (Save Entry)'}
+                    <Text style={styles.quickSaveBtnText}>
+                      {saving ? '...' : 'መዝገብ'}
                     </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Edit Profile Button */}
-                <TouchableOpacity
-                  style={[styles.historyTriggerBtn, { borderColor: 'rgba(39, 227, 101, 0.2)' }]}
-                  onPress={openEditCustomer}
-                >
-                  <Text style={{ color: '#27E365', fontWeight: 'bold', fontSize: 12 }}>
-                    ✏️ ፕሮፋይል ያርሙ (Edit Profile)
-                  </Text>
-                </TouchableOpacity>
-
-                {/* History Trigger Button */}
-                <TouchableOpacity
-                  style={styles.historyTriggerBtn}
-                  onPress={() => setIsHistoryModalVisible(true)}
-                >
-                  <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
-                    📜 ታሪክ ይመልከቱ (Transaction History)
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Delete Customer */}
-                <TouchableOpacity
-                  style={[styles.historyTriggerBtn, { backgroundColor: 'rgba(255, 77, 77, 0.1)', borderColor: 'rgba(255, 77, 77, 0.2)' }]}
-                  onPress={handleDeletePress}
-                >
-                  <Text style={{ color: '#FF4D4D', fontWeight: 'bold', fontSize: 12 }}>
-                    🗑️ ደንበኛን ሰርዝ (Delete Customer)
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Close Modal Action */}
-                <View style={styles.modalActionRow}>
-                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setSelectedCustomer(null)}>
-                    <Text style={styles.cancelBtnText}>ዝጋ (Close)</Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -681,7 +701,17 @@ export default function CustomersScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>ፕሮፋይል ያርሙ (Edit Profile)</Text>
+            {/* Error banner INSIDE the modal */}
+            {error ? (
+              <View style={styles.modalErrorBanner}>
+                <Text style={styles.modalErrorText}>{error}</Text>
+                <TouchableOpacity onPress={() => setError('')}>
+                  <Text style={styles.modalErrorClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            <Text style={styles.modalTitle}>ፕሮፋይል ያርሙ</Text>
 
             <Text style={styles.inputLabel}>ሙሉ ስም</Text>
             <TextInput
@@ -692,7 +722,7 @@ export default function CustomersScreen() {
               onChangeText={setEditCustomerName}
             />
 
-            <Text style={styles.inputLabel}>ስልክ ቁጥር (09... ወይም 07...)</Text>
+            <Text style={styles.inputLabel}>ስልክ ቁጥር</Text>
             <TextInput
               style={styles.modalInput}
               placeholder="ምሳሌ፡ 0911223344"
@@ -701,16 +731,14 @@ export default function CustomersScreen() {
               value={editCustomerPhone}
               onChangeText={setEditCustomerPhone}
             />
-            <Text style={{ color: '#5A786A', fontSize: 10, marginBottom: 10 }}>
-              ስልክ ቁጥር 10 አሃዝ መሆን አለበት (09... ወይም 07...)
-            </Text>
 
             <View style={styles.modalActionRow}>
               <TouchableOpacity
                 style={styles.cancelBtn}
                 onPress={() => setIsEditCustomerVisible(false)}
               >
-                <Text style={styles.cancelBtnText}>ሰርዝ</Text>
+                {/* FIX 3: Cancel = ተመለስ */}
+                <Text style={styles.cancelBtnText}>ተመለስ</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -736,28 +764,28 @@ export default function CustomersScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>መሰረዝ ያረጋግጡ (Confirm Delete)</Text>
+            <Text style={styles.modalTitle}>መሰረዝ ያረጋግጡ</Text>
             <Text style={{ color: '#A8C5B8', fontSize: 13, textAlign: 'center', marginBottom: 16 }}>
-              እርግጠኛ ነዎት "{selectedCustomer?.name}"ን መሰረዝ ይፈልጋሉ? ይህ እርምጃ ሊመለስ አይችልም።
+              እርግጠኛ ነዎት "{selectedCustomer?.name}"ን መሰረዝ ይፈልጋሉ?
             </Text>
 
             <View style={styles.modalActionRow}>
               <TouchableOpacity style={styles.cancelBtn} onPress={cancelDelete}>
-                <Text style={styles.cancelBtnText}>አይ (Cancel)</Text>
+                <Text style={styles.cancelBtnText}>አይ</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.saveBtn, { backgroundColor: alertRed }]}
                 onPress={confirmDelete}
               >
-                <Text style={[styles.saveBtnText, { color: '#FFFFFF' }]}>አዎ (Delete)</Text>
+                <Text style={[styles.saveBtnText, { color: '#FFFFFF' }]}>አዎ</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* EDITABLE TRANSACTION HISTORY MODAL */}
+      {/* TRANSACTION HISTORY MODAL */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -766,13 +794,13 @@ export default function CustomersScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>የግብይት ታሪክ (Transaction History)</Text>
+            <Text style={styles.modalTitle}>የግብይት ታሪክ</Text>
 
             {selectedCustomer && (
               <FlatList
                 data={selectedCustomer.history}
                 keyExtractor={(item) => item.id}
-                style={{ maxHeight: 280 }}
+                style={{ maxHeight: 300 }}
                 ListEmptyComponent={
                   <View style={{ padding: 16, alignItems: 'center' }}>
                     <Text style={{ color: '#5A786A', fontSize: 13 }}>እስካሁን ግብይት የለም</Text>
@@ -781,8 +809,18 @@ export default function CustomersScreen() {
                 renderItem={({ item }) => (
                   <View style={styles.historyRow}>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 }}>{item.item || (item.type === 'credit' ? 'ዱቤ' : 'ክፍያ')}</Text>
-                      <Text style={{ color: '#A8C5B8', fontSize: 10 }}>{formatDate(item.created_at)}</Text>
+                      <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 }}>
+                        {item.item || (item.type === 'credit' ? 'ዱቤ' : 'ክፍያ')}
+                      </Text>
+                      {/* Original two-line date UI (user preferred this) */}
+                      <Text style={{ color: '#A8C5B8', fontSize: 10 }}>
+                        📅 ተመዝገበ: {formatDate(item.created_at)}
+                      </Text>
+                      {item.updated_at && item.updated_at !== item.created_at && (
+                        <Text style={{ color: '#27E365', fontSize: 10 }}>
+                          ✏️ ተስተካክሏል: {formatDate(item.updated_at)}
+                        </Text>
+                      )}
                     </View>
 
                     <Text style={{ color: item.type === 'credit' ? alertRed : logoGreen, fontWeight: 'bold', fontSize: 13, marginRight: 10 }}>
@@ -818,21 +856,35 @@ export default function CustomersScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>ግብይት ያርሙ (Edit Entry)</Text>
+            {/* Error banner INSIDE the modal */}
+            {error ? (
+              <View style={styles.modalErrorBanner}>
+                <Text style={styles.modalErrorText}>{error}</Text>
+                <TouchableOpacity onPress={() => setError('')}>
+                  <Text style={styles.modalErrorClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            <Text style={styles.modalTitle}>ግብይት ያርሙ</Text>
 
             {/* TYPE TOGGLE */}
-            <View style={{ flexDirection: 'row', backgroundColor: '#0E2417', borderRadius: 8, padding: 3, marginBottom: 16 }}>
+            <View style={styles.typeToggleRow}>
               <TouchableOpacity
-                style={[{ flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 }, editType === 'credit' ? { backgroundColor: alertRed } : null]}
+                style={[styles.typeToggleBtn, editType === 'credit' && styles.typeToggleRed]}
                 onPress={() => setEditType('credit')}
               >
-                <Text style={{ color: editType === 'credit' ? '#FFFFFF' : '#A8C5B8', fontWeight: 'bold', fontSize: 12 }}>🔴 ዱቤ</Text>
+                <Text style={{ color: editType === 'credit' ? '#FFFFFF' : '#A8C5B8', fontWeight: 'bold', fontSize: 12 }}>
+                  🔴 ዱቤ
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[{ flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 }, editType === 'payment' ? { backgroundColor: logoGreen } : null]}
+                style={[styles.typeToggleBtn, editType === 'payment' && styles.typeToggleGreen]}
                 onPress={() => setEditType('payment')}
               >
-                <Text style={{ color: editType === 'payment' ? '#0E2417' : '#A8C5B8', fontWeight: 'bold', fontSize: 12 }}>🟢 ክፍያ</Text>
+                <Text style={{ color: editType === 'payment' ? '#0E2417' : '#A8C5B8', fontWeight: 'bold', fontSize: 12 }}>
+                  🟢 ክፍያ
+                </Text>
               </TouchableOpacity>
             </View>
 
@@ -857,6 +909,16 @@ export default function CustomersScreen() {
                   placeholderTextColor="#5A786A"
                 />
 
+                {/* Delete transaction button */}
+                <TouchableOpacity
+                  style={styles.deleteTxBtn}
+                  onPress={() => openDeleteTransaction(editingTransaction)}
+                  disabled={saving}
+                >
+                  <Ionicons name="trash-outline" size={16} color="#FF4D4D" />
+                  <Text style={styles.deleteTxBtnText}>🗑️ ግብይትን ሰርዝ</Text>
+                </TouchableOpacity>
+
                 <View style={styles.modalActionRow}>
                   <TouchableOpacity 
                     style={styles.cancelBtn} 
@@ -867,7 +929,8 @@ export default function CustomersScreen() {
                       setEditType('credit');
                     }}
                   >
-                    <Text style={styles.cancelBtnText}>ሰርዝ</Text>
+                    {/* FIX 3: Cancel = ተመለስ */}
+                    <Text style={styles.cancelBtnText}>ተመለስ</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -886,6 +949,39 @@ export default function CustomersScreen() {
         </View>
       </Modal>
 
+      {/* DELETE TRANSACTION CONFIRMATION MODAL */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isDeleteTxConfirmVisible}
+        onRequestClose={() => setIsDeleteTxConfirmVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>ግብይትን መሰረዝ ያረጋግጡ</Text>
+            <Text style={{ color: '#A8C5B8', fontSize: 13, textAlign: 'center', marginBottom: 16 }}>
+              እርግጠኛ ነዎት ይህን ግብይት መሰረዝ ይፈልጋሉ? ይህ ሊመለስ አይችልም።
+            </Text>
+
+            <View style={styles.modalActionRow}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsDeleteTxConfirmVisible(false)}>
+                <Text style={styles.cancelBtnText}>አይ</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.saveBtn, { backgroundColor: alertRed }]}
+                onPress={confirmDeleteTransaction}
+                disabled={saving}
+              >
+                <Text style={[styles.saveBtnText, { color: '#FFFFFF' }]}>
+                  {saving ? '...' : 'አዎ'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ADD NEW CUSTOMER MODAL */}
       <Modal
         animationType="slide"
@@ -895,6 +991,16 @@ export default function CustomersScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
+            {/* Error banner INSIDE the modal */}
+            {error ? (
+              <View style={styles.modalErrorBanner}>
+                <Text style={styles.modalErrorText}>{error}</Text>
+                <TouchableOpacity onPress={() => setError('')}>
+                  <Text style={styles.modalErrorClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
             <Text style={styles.modalTitle}>አዲስ ደንበኛ መዝገብ</Text>
 
             <Text style={styles.inputLabel}>ሙሉ ስም</Text>
@@ -906,7 +1012,7 @@ export default function CustomersScreen() {
               onChangeText={setNewCustomerName}
             />
 
-            <Text style={styles.inputLabel}>ስልክ ቁጥር (09... ወይም 07...)</Text>
+            <Text style={styles.inputLabel}>ስልክ ቁጥር</Text>
             <TextInput
               style={styles.modalInput}
               placeholder="ምሳሌ፡ 0911223344"
@@ -915,16 +1021,14 @@ export default function CustomersScreen() {
               value={newCustomerPhone}
               onChangeText={setNewCustomerPhone}
             />
-            <Text style={{ color: '#5A786A', fontSize: 10, marginBottom: 10 }}>
-              ስልክ ቁጥር 10 አሃዝ መሆን አለበት
-            </Text>
 
             <View style={styles.modalActionRow}>
               <TouchableOpacity
                 style={styles.cancelBtn}
                 onPress={() => setIsAddCustomerVisible(false)}
               >
-                <Text style={styles.cancelBtnText}>ሰርዝ</Text>
+                {/* FIX 3: Cancel = ተመለስ */}
+                <Text style={styles.cancelBtnText}>ተመለስ</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1167,6 +1271,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 2,
   },
+
+  // ===== SHARED MODAL STYLES =====
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
@@ -1187,55 +1293,19 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 14,
   },
-  balanceBadge: {
-    marginTop: 6,
-    padding: 8,
-    backgroundColor: '#0E2417',
-    borderRadius: 8,
-    width: '100%',
-    alignItems: 'center',
-  },
-  quickRecordBox: {
-    backgroundColor: '#0E2417',
-    padding: 12,
-    borderRadius: 8,
-    marginVertical: 10,
-  },
-  historyTriggerBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginVertical: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-  },
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0E2417',
-    padding: 10,
-    borderRadius: 6,
-    marginBottom: 6,
-  },
-  editChipBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-  },
   inputLabel: {
     color: '#A8C5B8',
-    fontSize: 11,
-    marginBottom: 4,
+    fontSize: 12,
+    marginBottom: 6,
   },
   modalInput: {
-    backgroundColor: '#183424',
+    backgroundColor: '#0E2417',
     color: '#FFFFFF',
     borderRadius: 8,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 12,
     fontSize: 13,
+    marginBottom: 12,
   },
   modalActionRow: {
     flexDirection: 'row',
@@ -1264,5 +1334,227 @@ const styles = StyleSheet.create({
   saveBtnText: {
     color: '#0E2417',
     fontWeight: 'bold',
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0E2417',
+    padding: 10,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  editChipBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+  },
+
+  // ===== ERROR BANNER INSIDE MODALS =====
+  modalErrorBanner: {
+    backgroundColor: 'rgba(255, 77, 77, 0.15)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.3)',
+  },
+  modalErrorText: {
+    color: '#FF4D4D',
+    fontSize: 12,
+    flex: 1,
+  },
+  modalErrorClose: {
+    color: '#FF4D4D',
+    fontSize: 16,
+    fontWeight: 'bold',
+    paddingHorizontal: 6,
+  },
+
+  // ===== DELETE TRANSACTION BUTTON =====
+  deleteTxBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 77, 77, 0.1)',
+    borderRadius: 8,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 77, 0.2)',
+  },
+  deleteTxBtnText: {
+    color: '#FF4D4D',
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+
+  // ===== PROFESSIONAL DETAIL MODAL STYLES =====
+  detailModalContent: {
+    backgroundColor: '#0E2417',
+    borderRadius: 16,
+    margin: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  detailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  detailAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#254A35',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  detailAvatarText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 20,
+  },
+  detailName: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  detailPhone: {
+    color: '#A8C5B8',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  balanceCard: {
+    backgroundColor: '#183424',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  balanceCardLabel: {
+    color: '#A8C5B8',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  balanceCardValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  balanceCardSub: {
+    color: '#5A786A',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    gap: 8,
+  },
+  actionBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  actionBtnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  quickEntryCard: {
+    backgroundColor: '#183424',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  quickEntryTitle: {
+    color: '#27E365',
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  quickToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#0E2417',
+    borderRadius: 8,
+    padding: 3,
+    marginBottom: 12,
+  },
+  quickToggle: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  quickToggleActiveRed: {
+    backgroundColor: '#FF4D4D',
+  },
+  quickToggleActiveGreen: {
+    backgroundColor: '#27E365',
+  },
+  quickToggleText: {
+    color: '#A8C5B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  quickToggleTextActive: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  quickInput: {
+    backgroundColor: '#0E2417',
+    color: '#FFFFFF',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  quickSaveBtn: {
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  quickSaveBtnText: {
+    color: '#0E2417',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+
+  // ===== EDIT TRANSACTION TOGGLE STYLES =====
+  typeToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#0E2417',
+    borderRadius: 8,
+    padding: 3,
+    marginBottom: 16,
+  },
+  typeToggleBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  typeToggleRed: {
+    backgroundColor: '#FF4D4D',
+  },
+  typeToggleGreen: {
+    backgroundColor: '#27E365',
   },
 });
