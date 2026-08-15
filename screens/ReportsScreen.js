@@ -4,7 +4,6 @@ import {
   Text,
   View,
   TouchableOpacity,
-  FlatList,
   StatusBar,
   SafeAreaView,
   Image,
@@ -12,7 +11,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { getReportStats, getTopDebtors, getTransactions } from '../api';
+import { getReportStats, getTopDebtors, getTransactions, getCustomers } from '../api';
 
 export default function ReportsScreen() {
   const [selectedPeriod, setSelectedPeriod] = useState('today');
@@ -23,12 +22,15 @@ export default function ReportsScreen() {
   // Real data states
   const [stats, setStats] = useState({
     totalOutstanding: 0,
+    totalActiveDebtors: 0,
     issuedCredit: 0,
+    issuedCreditCustomers: 0,
     collectedCash: 0,
-    activeDebtorsCount: 0,
+    collectedCashCustomers: 0,
   });
   const [topDebtors, setTopDebtors] = useState([]);
   const [recentActivity, setRecentActivity] = useState([]);
+  const [customers, setCustomers] = useState([]);
 
   const logoGreen = '#27E365';
   const alertRed = '#FF4D4D';
@@ -40,25 +42,31 @@ export default function ReportsScreen() {
   const fetchData = useCallback(async () => {
     try {
       setError('');
-      const [statsData, debtorsData, allTransactions] = await Promise.all([
+      const [statsData, debtorsData, allTransactions, customerList] = await Promise.all([
         getReportStats(selectedPeriod),
         getTopDebtors(5),
         getTransactions(),
+        getCustomers(),
       ]);
 
       setStats(statsData);
       setTopDebtors(debtorsData);
+      setCustomers(customerList);
 
       // Get last 10 transactions for activity feed
-      const last10 = allTransactions.slice(0, 10).map((tx) => ({
-        id: tx.id,
-        customerId: tx.customer_id,
-        customerName: tx.customer_name || 'ደንበኛ',
-        item: tx.item || (tx.type === 'credit' ? 'ዱቤ' : 'ክፍያ'),
-        amount: Number(tx.amount),
-        type: tx.type,
-        created_at: tx.created_at,
-      }));
+      // Look up real customer names from customerList
+      const last10 = allTransactions.slice(0, 10).map((tx) => {
+        const cust = customerList.find(c => c.id === tx.customer_id);
+        return {
+          id: tx.id,
+          customerId: tx.customer_id,
+          customerName: cust?.name || 'ደንበኛ',
+          item: tx.item || (tx.type === 'credit' ? 'ዱቤ' : 'ክፍያ'),
+          amount: Number(tx.amount),
+          type: tx.type,
+          created_at: tx.created_at,
+        };
+      });
       setRecentActivity(last10);
     } catch (err) {
       setError('መረጃ መጫን አልተሳካም');
@@ -136,36 +144,6 @@ export default function ReportsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={logoGreen} />
         }
       >
-        {/* Period Selector Tabs */}
-        <View style={styles.periodContainer}>
-          <TouchableOpacity
-            style={[styles.periodTab, selectedPeriod === 'today' ? styles.activePeriodTab : null]}
-            onPress={() => setSelectedPeriod('today')}
-          >
-            <Text style={[styles.periodTabText, selectedPeriod === 'today' ? styles.activePeriodText : null]}>
-              ዛሬ
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.periodTab, selectedPeriod === 'week' ? styles.activePeriodTab : null]}
-            onPress={() => setSelectedPeriod('week')}
-          >
-            <Text style={[styles.periodTabText, selectedPeriod === 'week' ? styles.activePeriodText : null]}>
-              በዚህ ሳምንት
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.periodTab, selectedPeriod === 'month' ? styles.activePeriodTab : null]}
-            onPress={() => setSelectedPeriod('month')}
-          >
-            <Text style={[styles.periodTabText, selectedPeriod === 'month' ? styles.activePeriodText : null]}>
-              በዚህ ወር
-            </Text>
-          </TouchableOpacity>
-        </View>
-
         {loading ? (
           <View style={styles.centerBox}>
             <ActivityIndicator size="large" color={logoGreen} />
@@ -173,26 +151,61 @@ export default function ReportsScreen() {
           </View>
         ) : (
           <>
-            {/* Main Stats Summary Section */}
+            {/* ============================================ */}
+            {/* FIX 1: TOTAL CREDIT BOX IS NOW AT THE TOP   */}
+            {/* This number is ALL-TIME. It never changes.   */}
+            {/* ============================================ */}
             <View style={styles.statsContainer}>
-              {/* Main Total Unpaid Card */}
               <View style={styles.mainStatCard}>
                 <Text style={styles.mainStatLabel}>ጠቅላላ ያልተከፈለ ዱቤ (Total Credit)</Text>
                 <Text style={styles.mainStatValue}>{formatAmount(stats.totalOutstanding)}</Text>
-                <Text style={styles.mainStatSubtext}>ከ {stats.activeDebtorsCount} ደንበኞች የሚጠበቅ</Text>
+                {/* FIX 2: This count is ALL-TIME, not period-specific */}
+                <Text style={styles.mainStatSubtext}>ከ {stats.totalActiveDebtors} ደንበኞች የሚጠበቅ</Text>
+              </View>
+            </View>
+
+            {/* Period Selector Tabs */}
+            <View style={styles.periodContainer}>
+              <TouchableOpacity
+                style={[styles.periodTab, selectedPeriod === 'today' ? styles.activePeriodTab : null]}
+                onPress={() => setSelectedPeriod('today')}
+              >
+                <Text style={[styles.periodTabText, selectedPeriod === 'today' ? styles.activePeriodText : null]}>
+                  ዛሬ
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.periodTab, selectedPeriod === 'week' ? styles.activePeriodTab : null]}
+                onPress={() => setSelectedPeriod('week')}
+              >
+                <Text style={[styles.periodTabText, selectedPeriod === 'week' ? styles.activePeriodText : null]}>
+                  በዚህ ሳምንት
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.periodTab, selectedPeriod === 'month' ? styles.activePeriodTab : null]}
+                onPress={() => setSelectedPeriod('month')}
+              >
+                <Text style={[styles.periodTabText, selectedPeriod === 'month' ? styles.activePeriodText : null]}>
+                  በዚህ ወር
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Breakdown Grid — These numbers CHANGE with the period */}
+            <View style={styles.statGrid}>
+              <View style={styles.gridCard}>
+                <Text style={styles.gridLabel}>የተሰጠ ዱቤ</Text>
+                <Text style={[styles.gridValue, { color: alertRed }]}>+{formatAmount(stats.issuedCredit)}</Text>
+                <Text style={styles.gridSubtext}>ለ {stats.issuedCreditCustomers} ደንበኞች</Text>
               </View>
 
-              {/* Breakdown Grid */}
-              <View style={styles.statGrid}>
-                <View style={styles.gridCard}>
-                  <Text style={styles.gridLabel}>የተሰጠ ዱቤ</Text>
-                  <Text style={[styles.gridValue, { color: alertRed }]}>+{formatAmount(stats.issuedCredit)}</Text>
-                </View>
-
-                <View style={styles.gridCard}>
-                  <Text style={styles.gridLabel}>የተሰበሰበ ክፍያ</Text>
-                  <Text style={[styles.gridValue, { color: logoGreen }]}>-{formatAmount(stats.collectedCash)}</Text>
-                </View>
+              <View style={styles.gridCard}>
+                <Text style={styles.gridLabel}>የተሰበሰበ ክፍያ</Text>
+                <Text style={[styles.gridValue, { color: logoGreen }]}>-{formatAmount(stats.collectedCash)}</Text>
+                <Text style={styles.gridSubtext}>ከ {stats.collectedCashCustomers} ደንበኞች</Text>
               </View>
             </View>
 
@@ -316,32 +329,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 13,
   },
-  periodContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#183424',
-    marginHorizontal: 16,
-    borderRadius: 8,
-    padding: 3,
-    marginVertical: 10,
-  },
-  periodTab: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderRadius: 6,
-  },
-  activePeriodTab: {
-    backgroundColor: '#27E365',
-  },
-  periodTabText: {
-    color: '#A8C5B8',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  activePeriodText: {
-    color: '#0E2417',
-    fontWeight: 'bold',
-  },
   statsContainer: {
     paddingHorizontal: 16,
     marginBottom: 10,
@@ -370,9 +357,37 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 4,
   },
+  periodContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#183424',
+    marginHorizontal: 16,
+    borderRadius: 8,
+    padding: 3,
+    marginVertical: 10,
+  },
+  periodTab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  activePeriodTab: {
+    backgroundColor: '#27E365',
+  },
+  periodTabText: {
+    color: '#A8C5B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  activePeriodText: {
+    color: '#0E2417',
+    fontWeight: 'bold',
+  },
   statGrid: {
     flexDirection: 'row',
     gap: 10,
+    paddingHorizontal: 16,
+    marginBottom: 10,
   },
   gridCard: {
     flex: 1,
@@ -389,6 +404,11 @@ const styles = StyleSheet.create({
   gridValue: {
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  gridSubtext: {
+    color: '#5A786A',
+    fontSize: 10,
+    marginTop: 2,
   },
   sectionContainer: {
     paddingHorizontal: 16,

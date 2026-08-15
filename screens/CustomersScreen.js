@@ -166,7 +166,7 @@ export default function CustomersScreen() {
         ...c,
         balance,
         balanceText: formatBalance(balance),
-        isCleared: balance === 0,
+       isCleared: balance <= 0,
         lastTxDate: lastTx ? new Date(lastTx.created_at) : new Date(0),
         createdDate: new Date(c.created_at),
       };

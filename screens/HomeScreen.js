@@ -159,7 +159,7 @@ export default function HomeScreen({ onOpenSettings }) {
         ...c,
         balance,
         balanceText: formatBalance(balance),
-        isCleared: balance === 0,
+        isCleared: balance <= 0,
         sortDate: lastTx ? new Date(lastTx.created_at) : new Date(c.created_at),
       };
     })

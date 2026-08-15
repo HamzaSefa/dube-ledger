@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
+import { getSetting } from './settings';
 
 // ============================================
 // DUBE OFFLINE-FIRST DATABASE SERVICE LAYER
@@ -58,7 +59,7 @@ async function checkOnline() {
 // ============================================
 let syncPromise = null;
 
-async function performFullSync() {
+async function performFullSync(force = false) {
   // If sync is already running, wait for it
   if (syncPromise) {
     return await syncPromise;
@@ -67,6 +68,12 @@ async function performFullSync() {
   // Start a new sync
   syncPromise = (async () => {
     try {
+      // If autoSync is OFF and this is not a forced sync, skip
+      if (!force) {
+        const autoSync = await getSetting('autoSync', true);
+        if (!autoSync) return { synced: 0, skipped: true };
+      }
+
       const online = await checkOnline();
       if (!online) return { synced: 0 };
 
@@ -450,6 +457,7 @@ export async function getCustomerBalance(customerId) {
 
 export async function getReportStats(period = 'today') {
   const transactions = await getTransactions();
+  const customers = await getCustomers();
   const now = new Date();
   let startDate;
 
@@ -465,26 +473,47 @@ export async function getReportStats(period = 'today') {
   const startISO = startDate.toISOString();
   let issuedCredit = 0;
   let collectedCash = 0;
-  const debtorIds = new Set();
+  const periodCreditCustomers = new Set();
+  const periodPaymentCustomers = new Set();
 
+  // Period-specific numbers
   transactions.forEach((tx) => {
     if (tx.created_at >= startISO) {
       if (tx.type === 'credit') {
         issuedCredit += Number(tx.amount);
-        debtorIds.add(tx.customer_id);
+        periodCreditCustomers.add(tx.customer_id);
       } else if (tx.type === 'payment') {
         collectedCash += Number(tx.amount);
+        periodPaymentCustomers.add(tx.customer_id);
       }
     }
   });
 
+  // ALL-TIME total outstanding (never changes with period)
   let totalOutstanding = 0;
   transactions.forEach((tx) => {
     if (tx.type === 'credit') totalOutstanding += Number(tx.amount);
     else if (tx.type === 'payment') totalOutstanding -= Number(tx.amount);
   });
 
-  return { totalOutstanding, issuedCredit, collectedCash, activeDebtorsCount: debtorIds.size };
+  // ALL-TIME count of customers with positive balance (real debtors)
+  const balances = {};
+  transactions.forEach((tx) => {
+    if (!balances[tx.customer_id]) balances[tx.customer_id] = 0;
+    if (tx.type === 'credit') balances[tx.customer_id] += Number(tx.amount);
+    else if (tx.type === 'payment') balances[tx.customer_id] -= Number(tx.amount);
+  });
+  
+  const totalActiveDebtors = customers.filter(c => (balances[c.id] || 0) > 0).length;
+
+  return { 
+    totalOutstanding, 
+    totalActiveDebtors,
+    issuedCredit, 
+    issuedCreditCustomers: periodCreditCustomers.size,
+    collectedCash, 
+    collectedCashCustomers: periodPaymentCustomers.size,
+  };
 }
 
 export async function getTopDebtors(limit = 5) {
@@ -536,4 +565,11 @@ export async function updateProfile(updates) {
 
   if (error) throw error;
   return data;
+}
+
+// ============================================
+// FORCE SYNC (manual override for "Sync Now" button)
+// ============================================
+export async function forceSync() {
+  return await performFullSync(true);
 }
